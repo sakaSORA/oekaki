@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <title>Smart Canvas HD+</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1e1e1e">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    
+    <link href="https://fonts.googleapis.com/css2?family=Zen+Kurenaido&family=Yuji+Syuku&family=Kiwi+Maru:wght@500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ui-bg: #1e1e1e;
+            --accent: #007aff;
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+        }
+
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+        body {
+            margin: 0;
+            background-color: #000;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
+
+        /* 描画エリア：通常時は下部UIを除いた全域 */
+        .viewport {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 5px;
+            max-height: calc(100dvh - 180px - var(--safe-bottom));
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* 文字入力時：キーボードを考慮し35%の視認性を死守 */
+        .viewport.text-editing {
+            flex: 0 0 35dvh;
+            align-items: flex-start;
+            padding-top: 10px;
+        }
+
+        #canvas-frame {
+            position: relative;
+            aspect-ratio: 720 / 1612;
+            height: 100%;
+            background: #fff;
+            box-shadow: 0 0 25px rgba(255,255,255,0.15);
+        }
+
+        canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            touch-action: none;
+        }
+
+        /* UIパネル */
+        .ui-panel {
+            background: var(--ui-bg);
+            border-top: 1px solid #333;
+            padding-bottom: calc(var(--safe-bottom) + 2px);
+            z-index: 1000;
+        }
+
+        #adjust-panel, #color-panel {
+            display: none;
+            background: #2a2a2a;
+            padding: 10px;
+            border-top: 2px solid var(--accent);
+        }
+
+        .adj-row { display: flex; gap: 8px; margin-bottom: 8px; }
+
+        .s-item {
+            flex: 1; display: flex; align-items: center;
+            gap: 5px; font-size: 11px; white-space: nowrap; overflow: hidden;
+        }
+
+        .s-item input[type="text"], .s-item select {
+            flex: 1; background: #333; color: #fff;
+            border: 1px solid #555; padding: 7px;
+            border-radius: 4px; font-size: 14px; min-width: 0;
+        }
+
+        .s-item input[type="range"] { flex: 1; min-width: 0; }
+
+        .settings-bar {
+            display: flex; padding: 8px 10px; gap: 10px;
+            align-items: center; border-bottom: 1px solid #333; background: #111;
+        }
+
+        .color-setting-ui { display: flex; flex-direction: column; gap: 10px; }
+        .history-row {
+            display: flex; align-items: center; gap: 8px;
+            background: #333; padding: 8px; border-radius: 6px;
+        }
+        .history-slot {
+            width: 38px; height: 38px; border: 2px solid #555; border-radius: 4px;
+        }
+
+        .grid {
+            display: grid; grid-template-columns: repeat(4, 1fr);
+            gap: 5px; padding: 8px;
+        }
+
+        button {
+            background: #333; color: white;
+            border: 1px solid #444; padding: 11px 0;
+            border-radius: 6px; font-size: 12px; font-weight: bold;
+        }
+
+        button:active { background: #555; }
+        button.active { background: var(--accent); border-color: var(--accent); }
+        .btn-apply { background: var(--accent); flex: 1; height: 42px; }
+        .btn-cancel { background: #444; flex: 1; height: 42px; }
+
+        .row-span { grid-column: span 2; }
+    </style>
+</head>
+<body>
+
+<div class="viewport" id="main-viewport">
+    <div id="canvas-frame">
+        <canvas id="c-main"></canvas>
+        <canvas id="c-temp"></canvas>
+    </div>
+</div>
+
+<div class="ui-panel">
+    <div id="color-panel">
+        <div class="color-setting-ui">
+            <div style="display:flex; align-items:center; gap:15px; justify-content:center; margin-bottom:5px;">
+                <span>色選択:</span>
+                <input type="color" id="main-color-picker" value="#000000" style="width:60px; height:40px;">
+            </div>
+            <div class="history-row">
+                <div id="slot1" class="history-slot" onclick="selectHistory(1)"></div>
+                <button type="button" style="flex:1;" onclick="saveToSlot(1)">現在の色を履歴1に保存</button>
+            </div>
+            <div class="history-row">
+                <div id="slot2" class="history-slot" onclick="selectHistory(2)"></div>
+                <button type="button" style="flex:1;" onclick="saveToSlot(2)">現在の色を履歴2に保存</button>
+            </div>
+            <button type="button" onclick="closeColorPanel()" class="btn-apply" style="margin-top:5px;">決定して閉じる</button>
+        </div>
+    </div>
+
+    <div id="adjust-panel">
+        <div id="text-specific" class="adj-row" style="display:none;">
+            <div class="s-item">内容:<input type="text" id="text-input" placeholder="入力..."></div>
+            <div class="s-item">書体:<select id="font-family">
+                <option value="sans-serif">ゴシック</option>
+                <option value="serif">明朝体</option>
+                <option value="'Zen Kurenaido', cursive">手書き</option>
+                <option value="'Yuji Syuku', serif">毛筆風</option>
+                <option value="'Kiwi Maru', sans-serif">丸文字</option>
+            </select></div>
+        </div>
+        <div class="adj-row">
+            <div class="s-item">大:<input type="range" id="adjust-scale" min="0.1" max="10" step="0.1" value="1"></div>
+            <div class="s-item">転:<input type="range" id="adjust-rotation" min="0" max="360" step="1" value="0"></div>
+        </div>
+        <div style="display:flex; gap:10px;">
+            <button type="button" onclick="cancelAdjust()" class="btn-cancel">中止</button>
+            <button type="button" onclick="applyAdjust()" class="btn-apply">配置を確定</button>
+        </div>
+    </div>
+
+    <div id="main-menu">
+        <div class="settings-bar">
+            <button type="button" onclick="openColorPanel()" id="color-btn" style="flex:0.8; background:#444; border-bottom:4px solid #000;">色選択</button>
+            <div class="s-item">太:<input type="range" id="stroke-size" min="1" max="100" value="10"></div>
+            <div class="s-item">角:<input type="range" id="corner-round" min="0" max="100" value="0"></div>
+        </div>
+        <div class="grid">
+            <button type="button" onclick="sm('free')" id="b-free" class="active">自由線</button>
+            <button type="button" onclick="sm('line')" id="b-line">直線</button>
+            <button type="button" onclick="sm('rect')" id="b-rect">四角</button>
+            <button type="button" onclick="sm('circle')" id="b-circle">丸</button>
+            <button type="button" onclick="undo()" id="btn-undo">Undo</button>
+            <button type="button" onclick="redo()" id="btn-redo">Redo</button>
+            <button type="button" onclick="sm('arrow')" id="b-arrow">矢印</button>
+            <button type="button" onclick="startTextMode()" id="b-text">文字</button>
+            <button type="button" onclick="imp()" class="row-span" style="background:#444">画像追加</button>
+            <button type="button" onclick="save()" class="row-span" style="background:#28a745">保存</button>
+        </div>
+    </div>
+</div>
+
+<input type="file" id="f-in" accept="image/*" style="display:none">
+
+<script>
+    const W = 720, H = 1612; // 20:9 HD+ Standard
+    const mc = document.getElementById('c-main'), tc = document.getElementById('c-temp');
+    const mctx = mc.getContext('2d'), tctx = tc.getContext('2d');
+    const vp = document.getElementById('main-viewport');
+    
+    let mode = 'free', isDrawing = false, x0, y0;
+    let history = [], redoStack = [];
+    let adjTarget = null, editImg = null;
+    let adjX = W/2, adjY = H/2, adjScale = 1, adjRotation = 0;
+    let isAdjusting = false;
+    let savedColors = ["#000000", "#ff0000"];
+
+    function init() {
+        [mc, tc].forEach(c => { c.width = W; c.height = H; });
+        mctx.fillStyle = "#ffffff"; mctx.fillRect(0, 0, W, H);
+        updateHistoryPanel(); saveHistory();
+        document.getElementById('color-btn').style.borderBottomColor = savedColors[0];
+    }
+
+    /* --- Color Logic --- */
+    function openColorPanel() { document.getElementById('main-menu').style.display = 'none'; document.getElementById('color-panel').style.display = 'block'; }
+    function closeColorPanel() { document.getElementById('main-menu').style.display = 'block'; document.getElementById('color-panel').style.display = 'none'; document.getElementById('color-btn').style.borderBottomColor = document.getElementById('main-color-picker').value; }
+    function updateHistoryPanel() { document.getElementById('slot1').style.backgroundColor = savedColors[0]; document.getElementById('slot2').style.backgroundColor = savedColors[1]; }
+    function saveToSlot(num) { savedColors[num-1] = document.getElementById('main-color-picker').value; updateHistoryPanel(); }
+    function selectHistory(num) { document.getElementById('main-color-picker').value = savedColors[num-1]; }
+
+    /* --- History Logic --- */
+    function saveHistory() { history.push(mc.toDataURL('image/png')); if(history.length > 21) history.shift(); redoStack = []; updateButtons(); }
+    function undo() { if(history.length <= 1) return; redoStack.push(history.pop()); const i = new Image(); i.onload = () => { mctx.clearRect(0,0,W,H); mctx.drawImage(i,0,0); }; i.src = history[history.length-1]; updateButtons(); }
+    function redo() { if(redoStack.length === 0) return; const d = redoStack.pop(); history.push(d); const i = new Image(); i.onload = () => { mctx.clearRect(0,0,W,H); mctx.drawImage(i,0,0); }; i.src = d; updateButtons(); }
+    function updateButtons() { document.getElementById('btn-undo').disabled = history.length <= 1; document.getElementById('btn-redo').disabled = redoStack.length === 0; }
+
+    /* --- Interaction --- */
+    function sm(m) { mode = m; document.querySelectorAll('.grid button').forEach(b => b.classList.remove('active')); if(document.getElementById('b-'+m)) document.getElementById('b-'+m).classList.add('active'); }
+    function getP(e) { const r = tc.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: (t.clientX - r.left) * (W / r.width), y: (t.clientY - r.top) * (H / r.height) }; }
+
+    function startTextMode() {
+        adjTarget = 'text'; adjX = W/2; adjY = H/3; adjScale = 2.0; adjRotation = 0;
+        document.getElementById('text-input').value = "テキスト";
+        document.getElementById('adjust-scale').value = 2.0;
+        document.getElementById('adjust-rotation').value = 0;
+        isAdjusting = true;
+        vp.classList.add('text-editing');
+        document.getElementById('main-menu').style.display = 'none';
+        document.getElementById('adjust-panel').style.display = 'block';
+        document.getElementById('text-specific').style.display = 'flex';
+        renderAdjust();
+        setTimeout(() => document.getElementById('text-input').focus(), 150);
+    }
+
+    function imp() { document.getElementById('f-in').click(); }
+    document.getElementById('f-in').onchange = (e) => {
+        const f = e.target.files[0]; if(!f) return;
+        const r = new FileReader();
+        r.onload = (ev) => {
+            const i = new Image();
+            i.onload = () => {
+                editImg = i; adjTarget = 'img'; adjX = W/2; adjY = H/2; adjRotation = 0;
+                adjScale = (W * 0.8) / i.width; 
+                document.getElementById('adjust-scale').value = adjScale.toFixed(2);
+                document.getElementById('adjust-rotation').value = 0;
+                isAdjusting = true;
+                document.getElementById('main-menu').style.display = 'none';
+                document.getElementById('adjust-panel').style.display = 'block';
+                document.getElementById('text-specific').style.display = 'none';
+                renderAdjust();
+            };
+            i.src = ev.target.result;
+        };
+        r.readAsDataURL(f);
+    };
+
+    function start(e) { const p = getP(e); x0 = p.x; y0 = p.y; if(isAdjusting) return; isDrawing = true; mctx.lineWidth = tctx.lineWidth = document.getElementById('stroke-size').value; mctx.strokeStyle = tctx.strokeStyle = document.getElementById('main-color-picker').value; mctx.lineCap = mctx.lineJoin = 'round'; if(mode === 'free') { mctx.beginPath(); mctx.moveTo(x0, y0); } }
+    function move(e) { if(!isDrawing && !isAdjusting) return; const p = getP(e); if(isAdjusting) { adjX += (p.x - x0); adjY += (p.y - y0); x0 = p.x; y0 = p.y; renderAdjust(); return; } tctx.clearRect(0, 0, W, H); if(mode === 'free') { mctx.lineTo(p.x, p.y); mctx.stroke(); } else { draw(tctx, mode, x0, y0, p.x, p.y); } }
+    function end(e) { if(!isDrawing) return; isDrawing = false; if(isAdjusting) return; const p = getP(e.changedTouches ? e.changedTouches[0] : e); if(mode !== 'free') draw(mctx, mode, x0, y0, p.x, p.y); saveHistory(); tctx.clearRect(0, 0, W, H); }
+
+    function draw(c, t, x1, y1, x2, y2) {
+        c.beginPath(); const r = parseInt(document.getElementById('corner-round').value);
+        if(t === 'line') { c.moveTo(x1, y1); c.lineTo(x2, y2); }
+        else if(t === 'rect') { c.roundRect(x1, y1, x2-x1, y2-y1, r); }
+        else if(t === 'circle') { c.arc(x1, y1, Math.hypot(x2-x1, y2-y1), 0, Math.PI*2); }
+        else if(t === 'arrow') { const h = c.lineWidth * 3, a = Math.atan2(y2-y1, x2-x1); c.moveTo(x1, y1); c.lineTo(x2, y2); c.lineTo(x2-h*Math.cos(a-Math.PI/6), y2-h*Math.sin(a-Math.PI/6)); c.moveTo(x2, y2); c.lineTo(x2-h*Math.cos(a+Math.PI/6), y2-h*Math.sin(a+Math.PI/6)); }
+        c.stroke();
+    }
+
+    function renderAdjust() {
+        tctx.clearRect(0, 0, W, H); tctx.save(); tctx.globalAlpha = 0.7;
+        tctx.translate(adjX, adjY); tctx.rotate(adjRotation * Math.PI / 180);
+        if(adjTarget === 'img') {
+            const sw = editImg.width * adjScale, sh = editImg.height * adjScale;
+            tctx.drawImage(editImg, -sw/2, -sh/2, sw, sh);
+        } else {
+            const txt = document.getElementById('text-input').value;
+            const font = document.getElementById('font-family').value;
+            tctx.font = `bold ${40 * adjScale}px ${font}`;
+            tctx.fillStyle = document.getElementById('main-color-picker').value;
+            tctx.textAlign = "center"; tctx.textBaseline = "middle";
+            tctx.fillText(txt, 0, 0);
+        }
+        tctx.restore();
+    }
+
+    document.getElementById('adjust-scale').oninput = (e) => { adjScale = parseFloat(e.target.value); renderAdjust(); };
+    document.getElementById('adjust-rotation').oninput = (e) => { adjRotation = parseFloat(e.target.value); renderAdjust(); };
+    document.getElementById('text-input').oninput = renderAdjust;
+    document.getElementById('font-family').onchange = renderAdjust;
+
+    function applyAdjust() {
+        mctx.save(); mctx.translate(adjX, adjY); mctx.rotate(adjRotation * Math.PI / 180);
+        if(adjTarget === 'img') { 
+            const sw = editImg.width * adjScale, sh = editImg.height * adjScale;
+            mctx.drawImage(editImg, -sw/2, -sh/2, sw, sh); 
+        } else { 
+            const txt = document.getElementById('text-input').value; 
+            if(txt){ 
+                mctx.font = `bold ${40 * adjScale}px ${document.getElementById('font-family').value}`; 
+                mctx.fillStyle = document.getElementById('main-color-picker').value; 
+                mctx.textAlign = "center"; mctx.textBaseline = "middle"; 
+                mctx.fillText(txt, 0, 0); 
+            } 
+        }
+        mctx.restore(); finishAdjust();
+    }
+
+    function cancelAdjust() { finishAdjust(); }
+    function finishAdjust() { isAdjusting = false; tctx.clearRect(0, 0, W, H); vp.classList.remove('text-editing'); document.getElementById('main-menu').style.display = 'block'; document.getElementById('adjust-panel').style.display = 'none'; saveHistory(); sm('free'); document.getElementById('f-in').value = ""; }
+
+    function save() { const l = mc.toDataURL('image/jpeg', 0.85); const a = document.createElement('a'); a.href = l; a.download = `HD_Art_${Date.now()}.jpg`; a.click(); }
+
+    tc.addEventListener('touchstart', start, {passive: false});
+    tc.addEventListener('touchmove', move, {passive: false});
+    tc.addEventListener('touchend', end, {passive: false});
+
+    // サービスワーカーの登録
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js')
+                .then(reg => console.log('Service Worker registered with scope:', reg.scope))
+                .catch(err => console.error('Service Worker registration failed:', err));
+        });
+    }
+
+    init();
+</script>
+</body>
+</html>
