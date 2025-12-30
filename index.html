@@ -31,7 +31,6 @@
             overscroll-behavior: none;
         }
 
-        /* 描画エリア：通常時は下部UIを除いた全域 */
         .viewport {
             flex: 1;
             display: flex;
@@ -42,7 +41,6 @@
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        /* 文字入力時：キーボードを考慮し35%の視認性を死守 */
         .viewport.text-editing {
             flex: 0 0 35dvh;
             align-items: flex-start;
@@ -64,7 +62,6 @@
             touch-action: none;
         }
 
-        /* UIパネル */
         .ui-panel {
             background: var(--ui-bg);
             border-top: 1px solid #333;
@@ -90,6 +87,21 @@
             flex: 1; background: #333; color: #fff;
             border: 1px solid #555; padding: 7px;
             border-radius: 4px; font-size: 14px; min-width: 0;
+        }
+
+        /* 追加：フォント追加ボタン用スタイル */
+        .btn-add-font {
+            background: #555;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            width: 30px;
+            height: 33px;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .s-item input[type="range"] { flex: 1; min-width: 0; }
@@ -158,13 +170,16 @@
     <div id="adjust-panel">
         <div id="text-specific" class="adj-row" style="display:none;">
             <div class="s-item">内容:<input type="text" id="text-input" placeholder="入力..."></div>
-            <div class="s-item">書体:<select id="font-family">
-                <option value="sans-serif">ゴシック</option>
-                <option value="serif">明朝体</option>
-                <option value="'Zen Kurenaido', cursive">手書き</option>
-                <option value="'Yuji Syuku', serif">毛筆風</option>
-                <option value="'Kiwi Maru', sans-serif">丸文字</option>
-            </select></div>
+            <div class="s-item">
+                書体:<select id="font-family">
+                    <option value="sans-serif">ゴシック</option>
+                    <option value="serif">明朝体</option>
+                    <option value="'Zen Kurenaido', cursive">手書き</option>
+                    <option value="'Yuji Syuku', serif">毛筆風</option>
+                    <option value="'Kiwi Maru', sans-serif">丸文字</option>
+                </select>
+                <button type="button" class="btn-add-font" onclick="document.getElementById('f-font').click()">＋</button>
+            </div>
         </div>
         <div class="adj-row">
             <div class="s-item">大:<input type="range" id="adjust-scale" min="0.1" max="10" step="0.1" value="1"></div>
@@ -198,9 +213,10 @@
 </div>
 
 <input type="file" id="f-in" accept="image/*" style="display:none">
+<input type="file" id="f-font" accept=".ttf,.otf,.woff,.woff2" style="display:none">
 
 <script>
-    const W = 720, H = 1612; // 20:9 HD+ Standard
+    const W = 720, H = 1612;
     const mc = document.getElementById('c-main'), tc = document.getElementById('c-temp');
     const mctx = mc.getContext('2d'), tctx = tc.getContext('2d');
     const vp = document.getElementById('main-viewport');
@@ -249,6 +265,38 @@
         renderAdjust();
         setTimeout(() => document.getElementById('text-input').focus(), 150);
     }
+
+    /* --- 追加機能：外部フォント読み込み --- */
+    document.getElementById('f-font').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const fontName = "CustomFont_" + Date.now();
+        const reader = new FileReader();
+
+        reader.onload = async (ev) => {
+            try {
+                const fontFace = new FontFace(fontName, ev.target.result);
+                const loadedFace = await fontFace.load();
+                document.fonts.add(loadedFace);
+
+                // セレクトボックスに追加して選択
+                const select = document.getElementById('font-family');
+                const option = document.createElement('option');
+                option.value = fontName;
+                option.textContent = "追加: " + file.name.substring(0, 10);
+                select.appendChild(option);
+                select.value = fontName;
+
+                renderAdjust();
+                alert("フォントを読み込みました");
+            } catch (err) {
+                console.error(err);
+                alert("フォントの読み込みに失敗しました。対応形式を確認してください。");
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    };
 
     function imp() { document.getElementById('f-in').click(); }
     document.getElementById('f-in').onchange = (e) => {
@@ -333,7 +381,6 @@
     tc.addEventListener('touchmove', move, {passive: false});
     tc.addEventListener('touchend', end, {passive: false});
 
-    // サービスワーカーの登録
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('./sw.js')

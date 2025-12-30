@@ -1,11 +1,13 @@
-// バージョン管理：アプリを更新した際はここを 'v2', 'v3' と変更してください
-const CACHE_NAME = 'smart-canvas-v1';
+// バージョン管理：アプリを更新した際はここを 'v3', 'v4' と変更してください
+const CACHE_NAME = 'smart-canvas-v3';
 
 // キャッシュするファイルリスト
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
+  './icon-192.png',
+  './icon-512.png',
   'https://fonts.googleapis.com/css2?family=Zen+Kurenaido&family=Yuji+Syuku&family=Kiwi+Maru:wght@500&display=swap'
 ];
 
