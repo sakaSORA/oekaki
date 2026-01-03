@@ -89,7 +89,6 @@
             border-radius: 4px; font-size: 14px; min-width: 0;
         }
 
-        /* 追加：フォント追加ボタン用スタイル */
         .btn-add-font {
             background: #555;
             color: white;
@@ -207,7 +206,7 @@
             <button type="button" onclick="sm('arrow')" id="b-arrow">矢印</button>
             <button type="button" onclick="startTextMode()" id="b-text">文字</button>
             <button type="button" onclick="imp()" class="row-span" style="background:#444">画像追加</button>
-            <button type="button" onclick="save()" class="row-span" style="background:#28a745">保存</button>
+            <button type="button" onclick="save()" class="row-span" style="background:#28a745">出力（保存）</button>
         </div>
     </div>
 </div>
@@ -235,20 +234,17 @@
         document.getElementById('color-btn').style.borderBottomColor = savedColors[0];
     }
 
-    /* --- Color Logic --- */
     function openColorPanel() { document.getElementById('main-menu').style.display = 'none'; document.getElementById('color-panel').style.display = 'block'; }
     function closeColorPanel() { document.getElementById('main-menu').style.display = 'block'; document.getElementById('color-panel').style.display = 'none'; document.getElementById('color-btn').style.borderBottomColor = document.getElementById('main-color-picker').value; }
     function updateHistoryPanel() { document.getElementById('slot1').style.backgroundColor = savedColors[0]; document.getElementById('slot2').style.backgroundColor = savedColors[1]; }
     function saveToSlot(num) { savedColors[num-1] = document.getElementById('main-color-picker').value; updateHistoryPanel(); }
     function selectHistory(num) { document.getElementById('main-color-picker').value = savedColors[num-1]; }
 
-    /* --- History Logic --- */
     function saveHistory() { history.push(mc.toDataURL('image/png')); if(history.length > 21) history.shift(); redoStack = []; updateButtons(); }
     function undo() { if(history.length <= 1) return; redoStack.push(history.pop()); const i = new Image(); i.onload = () => { mctx.clearRect(0,0,W,H); mctx.drawImage(i,0,0); }; i.src = history[history.length-1]; updateButtons(); }
     function redo() { if(redoStack.length === 0) return; const d = redoStack.pop(); history.push(d); const i = new Image(); i.onload = () => { mctx.clearRect(0,0,W,H); mctx.drawImage(i,0,0); }; i.src = d; updateButtons(); }
     function updateButtons() { document.getElementById('btn-undo').disabled = history.length <= 1; document.getElementById('btn-redo').disabled = redoStack.length === 0; }
 
-    /* --- Interaction --- */
     function sm(m) { mode = m; document.querySelectorAll('.grid button').forEach(b => b.classList.remove('active')); if(document.getElementById('b-'+m)) document.getElementById('b-'+m).classList.add('active'); }
     function getP(e) { const r = tc.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: (t.clientX - r.left) * (W / r.width), y: (t.clientY - r.top) * (H / r.height) }; }
 
@@ -266,34 +262,24 @@
         setTimeout(() => document.getElementById('text-input').focus(), 150);
     }
 
-    /* --- 追加機能：外部フォント読み込み --- */
     document.getElementById('f-font').onchange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
         const fontName = "CustomFont_" + Date.now();
         const reader = new FileReader();
-
         reader.onload = async (ev) => {
             try {
                 const fontFace = new FontFace(fontName, ev.target.result);
                 const loadedFace = await fontFace.load();
                 document.fonts.add(loadedFace);
-
-                // セレクトボックスに追加して選択
                 const select = document.getElementById('font-family');
                 const option = document.createElement('option');
                 option.value = fontName;
                 option.textContent = "追加: " + file.name.substring(0, 10);
                 select.appendChild(option);
                 select.value = fontName;
-
                 renderAdjust();
-                alert("フォントを読み込みました");
-            } catch (err) {
-                console.error(err);
-                alert("フォントの読み込みに失敗しました。対応形式を確認してください。");
-            }
+            } catch (err) { alert("失敗しました"); }
         };
         reader.readAsArrayBuffer(file);
     };
@@ -308,7 +294,6 @@
                 editImg = i; adjTarget = 'img'; adjX = W/2; adjY = H/2; adjRotation = 0;
                 adjScale = (W * 0.8) / i.width; 
                 document.getElementById('adjust-scale').value = adjScale.toFixed(2);
-                document.getElementById('adjust-rotation').value = 0;
                 isAdjusting = true;
                 document.getElementById('main-menu').style.display = 'none';
                 document.getElementById('adjust-panel').style.display = 'block';
@@ -372,23 +357,35 @@
         mctx.restore(); finishAdjust();
     }
 
+    function finishAdjust() { isAdjusting = false; tctx.clearRect(0, 0, W, H); vp.classList.remove('text-editing'); document.getElementById('main-menu').style.display = 'block'; document.getElementById('adjust-panel').style.display = 'none'; saveHistory(); sm('free'); }
     function cancelAdjust() { finishAdjust(); }
-    function finishAdjust() { isAdjusting = false; tctx.clearRect(0, 0, W, H); vp.classList.remove('text-editing'); document.getElementById('main-menu').style.display = 'block'; document.getElementById('adjust-panel').style.display = 'none'; saveHistory(); sm('free'); document.getElementById('f-in').value = ""; }
 
-    function save() { const l = mc.toDataURL('image/jpeg', 0.85); const a = document.createElement('a'); a.href = l; a.download = `HD_Art_${Date.now()}.jpg`; a.click(); }
+    /* --- 修正：WebViewでも確実に保存できるロジック --- */
+    function save() {
+        try {
+            const dataUrl = mc.toDataURL('image/jpeg', 0.9);
+            const win = window.open();
+            if(!win) {
+                alert("ポップアップがブロックされました。設定を許可するか、ブラウザで開いてください。");
+                return;
+            }
+            win.document.write(`
+                <html>
+                <body style="margin:0; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; color:white; font-family:sans-serif;">
+                    <p style="margin:10px;">画像を長押しして「画像を保存」を選択してください</p>
+                    <img src="${dataUrl}" style="max-width:90%; max-height:80%; border:2px solid #555;">
+                    <button onclick="window.close()" style="margin-top:20px; padding:10px 20px; background:#444; color:white; border:none; border-radius:5px;">戻る</button>
+                </body>
+                </html>
+            `);
+        } catch (e) {
+            alert("エラーが発生しました: " + e.message);
+        }
+    }
 
     tc.addEventListener('touchstart', start, {passive: false});
     tc.addEventListener('touchmove', move, {passive: false});
     tc.addEventListener('touchend', end, {passive: false});
-
-    if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js')
-                .then(reg => console.log('Service Worker registered with scope:', reg.scope))
-                .catch(err => console.error('Service Worker registration failed:', err));
-        });
-    }
-
     init();
 </script>
 </body>
