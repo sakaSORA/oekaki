@@ -279,7 +279,7 @@
                 select.appendChild(option);
                 select.value = fontName;
                 renderAdjust();
-            } catch (err) { alert("失敗しました"); }
+            } catch (err) { alert("フォントの読み込みに失敗しました"); }
         };
         reader.readAsArrayBuffer(file);
     };
@@ -360,32 +360,73 @@
     function finishAdjust() { isAdjusting = false; tctx.clearRect(0, 0, W, H); vp.classList.remove('text-editing'); document.getElementById('main-menu').style.display = 'block'; document.getElementById('adjust-panel').style.display = 'none'; saveHistory(); sm('free'); }
     function cancelAdjust() { finishAdjust(); }
 
-    /* --- 修正：WebViewでも確実に保存できるロジック --- */
+    /* --- 改善された保存機能（3段階フォールバック） --- */
     function save() {
         try {
             const dataUrl = mc.toDataURL('image/jpeg', 0.9);
-            const win = window.open();
-            if(!win) {
-                alert("ポップアップがブロックされました。設定を許可するか、ブラウザで開いてください。");
-                return;
-            }
-            win.document.write(`
-                <html>
-                <body style="margin:0; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; color:white; font-family:sans-serif;">
-                    <p style="margin:10px;">画像を長押しして「画像を保存」を選択してください</p>
-                    <img src="${dataUrl}" style="max-width:90%; max-height:80%; border:2px solid #555;">
-                    <button onclick="window.close()" style="margin-top:20px; padding:10px 20px; background:#444; color:white; border:none; border-radius:5px;">戻る</button>
-                </body>
-                </html>
-            `);
+            
+            // 方法1: ダウンロードリンクを使用（最も確実）
+            const link = document.createElement('a');
+            link.download = `canvas_${Date.now()}.jpg`;
+            link.href = dataUrl;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // 成功メッセージ（少し遅延して表示）
+            setTimeout(() => {
+                alert("画像を保存しました！ダウンロードフォルダをご確認ください。");
+            }, 100);
+            
         } catch (e) {
-            alert("エラーが発生しました: " + e.message);
+            // フォールバック: 新しいウィンドウで開く
+            try {
+                const dataUrl = mc.toDataURL('image/jpeg', 0.9);
+                const win = window.open();
+                if(!win) {
+                    showImageModal(dataUrl);
+                    return;
+                }
+                win.document.write(`
+                    <html>
+                    <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <meta charset="UTF-8">
+                        <title>画像を保存</title>
+                    </head>
+                    <body style="margin:0; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100dvh; color:white; font-family:sans-serif; padding:10px;">
+                        <p style="margin:10px; text-align:center; font-size:14px;">画像を長押しして「画像を保存」を選択してください</p>
+                        <img src="${dataUrl}" style="max-width:100%; height:auto; border:2px solid #555; margin:10px 0;">
+                        <button onclick="window.close()" style="margin-top:20px; padding:12px 24px; background:#007aff; color:white; border:none; border-radius:8px; font-size:16px; cursor:pointer;">閉じる</button>
+                    </body>
+                    </html>
+                `);
+            } catch (e2) {
+                const dataUrl = mc.toDataURL('image/jpeg', 0.9);
+                showImageModal(dataUrl);
+            }
         }
+    }
+
+    // モーダル表示（最終フォールバック）
+    function showImageModal(dataUrl) {
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:10000; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px;';
+        modal.innerHTML = `
+            <p style="color:white; margin-bottom:10px; text-align:center; font-size:14px;">画像を長押しして「画像を保存」を選択してください</p>
+            <img src="${dataUrl}" style="max-width:90%; max-height:70%; border:2px solid #555;">
+            <button onclick="this.parentElement.remove()" style="margin-top:20px; padding:12px 24px; background:#007aff; color:white; border:none; border-radius:8px; font-size:16px; cursor:pointer;">閉じる</button>
+        `;
+        document.body.appendChild(modal);
     }
 
     tc.addEventListener('touchstart', start, {passive: false});
     tc.addEventListener('touchmove', move, {passive: false});
     tc.addEventListener('touchend', end, {passive: false});
+    tc.addEventListener('mousedown', start);
+    tc.addEventListener('mousemove', move);
+    tc.addEventListener('mouseup', end);
     init();
 </script>
 </body>
