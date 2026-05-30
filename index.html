@@ -246,6 +246,7 @@
     const vp = document.getElementById('main-viewport');
     
     let mode = 'line', isDrawing = false, x0, y0;
+    let lastX = 0, lastY = 0; // タッチエンドフォールバック用
     let history = [], redoStack = [];
     
     let scale = 1, panX = 0, panY = 0;
@@ -256,6 +257,7 @@
 
     function init() {
         resizeCanvas(imgW, imgH);
+        mctx.filter = 'none';
         mctx.fillStyle = "#ffffff";
         mctx.fillRect(0, 0, imgW, imgH);
         saveHistory();
@@ -280,28 +282,46 @@
     }
 
     function saveHistory() {
+        mctx.save();
+        mctx.filter = 'none';
         history.push(mc.toDataURL('image/png'));
+        mctx.restore();
         if(history.length > 21) history.shift();
         redoStack = [];
         updateButtons();
     }
+    
     function undo() {
         if(history.length <= 1) return;
         redoStack.push(history.pop());
         const i = new Image();
-        i.onload = () => { mctx.clearRect(0,0,imgW,imgH); mctx.drawImage(i,0,0); };
+        i.onload = () => { 
+            mctx.save();
+            mctx.filter = 'none';
+            mctx.clearRect(0,0,imgW,imgH); 
+            mctx.drawImage(i,0,0); 
+            mctx.restore();
+        };
         i.src = history[history.length-1];
         updateButtons();
     }
+    
     function redo() {
         if(redoStack.length === 0) return;
         const d = redoStack.pop();
         history.push(d);
         const i = new Image();
-        i.onload = () => { mctx.clearRect(0,0,imgW,imgH); mctx.drawImage(i,0,0); };
+        i.onload = () => { 
+            mctx.save();
+            mctx.filter = 'none';
+            mctx.clearRect(0,0,imgW,imgH); 
+            mctx.drawImage(i,0,0); 
+            mctx.restore();
+        };
         i.src = d;
         updateButtons();
     }
+    
     function updateButtons() {
         document.getElementById('btn-undo').disabled = history.length <= 1;
         document.getElementById('btn-redo').disabled = redoStack.length === 0;
@@ -320,7 +340,8 @@
 
     function getP(e) {
         const rect = container.getBoundingClientRect();
-        const t = e.touches ? e.touches[0] : e;
+        // touchesまたはchangedTouchesからイベントデータを参照
+        const t = e.touches && e.touches.length > 0 ? e.touches[0] : (e.changedTouches && e.changedTouches.length > 0 ? e.changedTouches[0] : e);
         const clientX = t.clientX - rect.left;
         const clientY = t.clientY - rect.top;
         return { x: clientX * (imgW / rect.width), y: clientY * (imgH / rect.height) };
@@ -340,21 +361,21 @@
             const i = new Image();
             i.onload = () => {
                 resizeCanvas(i.width, i.height);
+                mctx.save();
+                mctx.filter = 'none';
                 mctx.clearRect(0, 0, imgW, imgH);
                 mctx.drawImage(i, 0, 0);
+                mctx.restore();
                 
-                // 画面表示領域（.viewport）のサイズを取得
                 const vpW = vp.clientWidth;
                 const vpH = vp.clientHeight;
                 
-                // 画像が画面に歪みなく「収まる」ための比率（contain）を自動計算
                 const scaleX = vpW / i.width;
                 const scaleY = vpH / i.height;
-                scale = Math.min(scaleX, scaleY, 1); // 画面より大きい場合は縮小、小さい場合は等倍(1)を上限とする
+                scale = Math.min(scaleX, scaleY, 1);
                 
                 panX = 0; panY = 0;
                 
-                // スライダーの最小値・最大値を画像サイズに応じて動的に適合
                 const zoomSlider = document.getElementById('view-zoom');
                 zoomSlider.min = Math.min(scale * 0.5, 0.1);
                 zoomSlider.max = 8;
@@ -393,6 +414,8 @@
     function start(e) {
         const p = getP(e);
         x0 = p.x; y0 = p.y;
+        lastX = p.x; lastY = p.y;
+        
         if (mode === 'pan') {
             isPanning = true;
             const t = e.touches ? e.touches[0] : e;
@@ -403,7 +426,8 @@
         if (mode === 'text-adjust') { isDrawing = true; return; }
         if (mode === 'line') {
             isDrawing = true;
-            setupContext(mctx); setupContext(tctx);
+            tctx.filter = 'none';
+            tctx.clearRect(0, 0, imgW, imgH);
         }
     }
 
@@ -415,12 +439,18 @@
             updateTransform(); return;
         }
         const p = getP(e);
+        lastX = p.x; lastY = p.y;
+        
         if (mode === 'text-adjust' && isDrawing) {
             adjX += (p.x - x0); adjY += (p.y - y0);
             x0 = p.x; y0 = p.y; renderAdjust(); return;
         }
         if (mode === 'line' && isDrawing) {
+            tctx.save();
+            tctx.filter = 'none';
             tctx.clearRect(0, 0, imgW, imgH);
+            setupContext(tctx);
+            
             let dx = p.x - x0; let dy = p.y - y0;
             let angle = Math.atan2(dy, dx);
             let distance = Math.hypot(dx, dy);
@@ -428,7 +458,9 @@
             angle = Math.round(angle / step) * step;
             let targetX = x0 + distance * Math.cos(angle);
             let targetY = y0 + distance * Math.sin(angle);
+            
             tctx.beginPath(); tctx.moveTo(x0, y0); tctx.lineTo(targetX, targetY); tctx.stroke();
+            tctx.restore();
         }
     }
 
@@ -436,8 +468,17 @@
         if (isPanning) { isPanning = false; container.style.cursor = 'grab'; return; }
         if (!isDrawing) return;
         isDrawing = false;
+        
         if (mode === 'line') {
-            const p = getP(e.originalEvent || e);
+            // タッチ終了時等で座標追従が途切れた場合は直前座標(lastX, lastY)を使用
+            let p = getP(e);
+            if (isNaN(p.x) || isNaN(p.y)) {
+                p = { x: lastX, y: lastY };
+            }
+            
+            mctx.save();
+            setupContext(mctx);
+            
             let dx = p.x - x0; let dy = p.y - y0;
             let angle = Math.atan2(dy, dx);
             let distance = Math.hypot(dx, dy);
@@ -445,7 +486,11 @@
             angle = Math.round(angle / step) * step;
             let targetX = x0 + distance * Math.cos(angle);
             let targetY = y0 + distance * Math.sin(angle);
+            
             mctx.beginPath(); mctx.moveTo(x0, y0); mctx.lineTo(targetX, targetY); mctx.stroke();
+            mctx.restore();
+            
+            tctx.filter = 'none';
             tctx.clearRect(0, 0, imgW, imgH);
             saveHistory();
         }
@@ -465,7 +510,10 @@
 
     function pickColor(x, y) {
         if (x < 0 || x >= imgW || y < 0 || y >= imgH) return;
+        mctx.save();
+        mctx.filter = 'none';
         const imgData = mctx.getImageData(Math.floor(x), Math.floor(y), 1, 1).data;
+        mctx.restore();
         currentColor = `#${imgData[0].toString(16).padStart(2,'0')}${imgData[1].toString(16).padStart(2,'0')}${imgData[2].toString(16).padStart(2,'0')}`;
         updateUI(); sm('line');
     }
@@ -483,7 +531,10 @@
     }
 
     function renderAdjust() {
-        tctx.clearRect(0, 0, imgW, imgH); tctx.save(); tctx.globalAlpha = 0.8;
+        tctx.save(); 
+        tctx.filter = 'none';
+        tctx.clearRect(0, 0, imgW, imgH); 
+        tctx.globalAlpha = 0.8;
         setupContext(tctx);
         tctx.translate(adjX, adjY); tctx.rotate(adjRotation * Math.PI / 180);
         const txt = document.getElementById('text-input').value;
@@ -504,6 +555,7 @@
 
     function applyAdjust() {
         mctx.save(); 
+        mctx.filter = 'none';
         setupContext(mctx);
         mctx.translate(adjX, adjY); mctx.rotate(adjRotation * Math.PI / 180);
         const txt = document.getElementById('text-input').value;
@@ -515,9 +567,14 @@
         }
         mctx.restore(); finishAdjust();
     }
+    
     function cancelAdjust() { finishAdjust(); }
+    
     function finishAdjust() {
+        tctx.save();
+        tctx.filter = 'none';
         tctx.clearRect(0, 0, imgW, imgH);
+        tctx.restore();
         mctx.filter = 'none';
         tctx.filter = 'none';
         document.getElementById('main-menu').style.display = 'block';
@@ -546,13 +603,19 @@
 
     function executeDownload(targetName) {
         try {
+            mctx.save();
+            mctx.filter = 'none';
             const dataUrl = mc.toDataURL('image/jpeg', 0.95);
+            mctx.restore();
             const link = document.createElement('a');
             link.download = targetName; link.href = dataUrl; link.style.display = 'none';
             document.body.appendChild(link); link.click(); document.body.removeChild(link);
             setTimeout(() => { alert(`画像を「${targetName}」として保存しました！`); }, 100);
         } catch (e) {
+            mctx.save();
+            mctx.filter = 'none';
             const dataUrl = mc.toDataURL('image/jpeg', 0.95);
+            mctx.restore();
             showImageModal(dataUrl, targetName);
         }
     }
@@ -576,6 +639,7 @@
         });
     }
 
+    // イベント捕捉構造をキャンバスコンテナおよびウィンドウ全体で完全に統一・連動
     container.addEventListener('touchstart', start, {passive: false});
     container.addEventListener('touchmove', move, {passive: false});
     container.addEventListener('touchend', end, {passive: false});
