@@ -49,12 +49,15 @@
             position: relative;
             cursor: crosshair;
             transform-origin: center center;
+            display: block;
+            flex-shrink: 0;
         }
 
         canvas {
             position: absolute;
             top: 0; left: 0;
             width: 100%; height: 100%;
+            display: block;
         }
         #c-temp { pointer-events: none; }
 
@@ -164,7 +167,7 @@
                 <option value="blur">なじませ（ぼかし）</option>
             </select>
         </div>
-        <div class="s-item" id="zoom-controller">ズーム:<input type="range" id="view-zoom" min="1" max="8" step="0.1" value="1"></div>
+        <div class="s-item" id="zoom-controller">ズーム:<input type="range" id="view-zoom" min="0.1" max="8" step="0.05" value="1"></div>
     </div>
 
     <div id="adjust-panel">
@@ -339,8 +342,24 @@
                 resizeCanvas(i.width, i.height);
                 mctx.clearRect(0, 0, imgW, imgH);
                 mctx.drawImage(i, 0, 0);
-                scale = 1; panX = 0; panY = 0;
-                document.getElementById('view-zoom').value = 1;
+                
+                // 画面表示領域（.viewport）のサイズを取得
+                const vpW = vp.clientWidth;
+                const vpH = vp.clientHeight;
+                
+                // 画像が画面に歪みなく「収まる」ための比率（contain）を自動計算
+                const scaleX = vpW / i.width;
+                const scaleY = vpH / i.height;
+                scale = Math.min(scaleX, scaleY, 1); // 画面より大きい場合は縮小、小さい場合は等倍(1)を上限とする
+                
+                panX = 0; panY = 0;
+                
+                // スライダーの最小値・最大値を画像サイズに応じて動的に適合
+                const zoomSlider = document.getElementById('view-zoom');
+                zoomSlider.min = Math.min(scale * 0.5, 0.1);
+                zoomSlider.max = 8;
+                zoomSlider.value = scale;
+                
                 updateTransform();
                 history = []; redoStack = [];
                 saveHistory();
@@ -465,10 +484,7 @@
 
     function renderAdjust() {
         tctx.clearRect(0, 0, imgW, imgH); tctx.save(); tctx.globalAlpha = 0.8;
-        
-        // タイプ（通常 / なじませ）の設定をリアルタイムにコンテキストへ反映
         setupContext(tctx);
-        
         tctx.translate(adjX, adjY); tctx.rotate(adjRotation * Math.PI / 180);
         const txt = document.getElementById('text-input').value;
         const font = document.getElementById('font-family').value;
@@ -478,7 +494,6 @@
         tctx.fillText(txt, 0, 0); tctx.restore();
     }
 
-    // パラメータ変更時にも描画状態をリフレッシュするイベントハンドラー群
     document.getElementById('adjust-scale').oninput = (e) => { adjScale = parseFloat(e.target.value); renderAdjust(); };
     document.getElementById('adjust-rotation').oninput = (e) => { adjRotation = parseFloat(e.target.value); renderAdjust(); };
     document.getElementById('text-input').oninput = renderAdjust;
@@ -489,10 +504,7 @@
 
     function applyAdjust() {
         mctx.save(); 
-        
-        // 確定時にもタイプ（通常 / なじませ）の設定をメインキャンバスへ完全に適用
         setupContext(mctx);
-        
         mctx.translate(adjX, adjY); mctx.rotate(adjRotation * Math.PI / 180);
         const txt = document.getElementById('text-input').value;
         const font = document.getElementById('font-family').value;
@@ -506,11 +518,8 @@
     function cancelAdjust() { finishAdjust(); }
     function finishAdjust() {
         tctx.clearRect(0, 0, imgW, imgH);
-        
-        // コンテキストのフィルター設定を残さないよう一律クリア
         mctx.filter = 'none';
         tctx.filter = 'none';
-        
         document.getElementById('main-menu').style.display = 'block';
         document.getElementById('adjust-panel').style.display = 'none';
         saveHistory(); sm('line');
