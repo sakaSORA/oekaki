@@ -114,6 +114,28 @@ canvas{
     display:block;
 }
 
+/* 原案メモ用フローティングパネルの追加スタイル */
+.memo-panel-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 400px;
+    background: rgba(30,30,30,.98);
+    backdrop-filter: blur(20px);
+    border: 1px solid #444;
+    border-radius: 16px;
+    padding: 16px;
+    z-index: 4000;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    display: none;
+}
+
+.memo-panel-overlay.show {
+    display: block;
+}
+
 .row{
     display:flex;
     gap:10px;
@@ -146,6 +168,13 @@ select{
 textarea{
     resize:none;
     min-height:120px;
+}
+
+/* メモ帳の入力エリア用 */
+.memo-textarea {
+    min-height: 200px;
+    font-family: inherit;
+    line-height: 1.4;
 }
 
 input[type="range"]{
@@ -188,6 +217,12 @@ input[type="range"]{
     font-size:13px;
 }
 
+/* メモ帳ボタン用のアクセントカラー */
+.memo-btn {
+    background: rgba(0, 122, 255, 0.6);
+    border: 1px solid rgba(0, 122, 255, 0.4);
+}
+
 #size-preview{
     position:absolute;
     top:50%;
@@ -214,6 +249,11 @@ input[type="range"]{
 <div id="viewport">
 
     <div class="top-ui">
+
+        <button class="top-btn memo-btn"
+        onclick="toggleMemoPanel()">
+            原案メモ
+        </button>
 
         <button class="top-btn"
         onclick="fitCanvas()">
@@ -243,7 +283,18 @@ input[type="range"]{
         <div id="size-circle"></div>
     </div>
 
-    <!-- Pen Panel -->
+    <div class="memo-panel-overlay" id="memo-panel">
+        <div class="row">
+            <div class="group">
+                <label>原案テキスト（ここに貼り付けて確認できます）</label>
+                <textarea id="memo-input" class="memo-textarea" placeholder="ここにテキストを貼り付けておくと、別アプリに切り替えずに文字入れ作業が行えます。自動で保存されます。"></textarea>
+            </div>
+        </div>
+        <div class="row">
+            <button class="action-btn secondary" onclick="toggleMemoPanel()">閉じる</button>
+        </div>
+    </div>
+
     <div class="panel show"
     id="pen-panel">
 
@@ -276,7 +327,6 @@ input[type="range"]{
 
     </div>
 
-    <!-- Text Panel -->
     <div class="panel"
     id="text-panel">
 
@@ -367,7 +417,6 @@ input[type="range"]{
 
 </div>
 
-<!-- Bottom Bar -->
 <div class="bottom-bar">
 
     <button class="tool-btn active"
@@ -503,7 +552,8 @@ function saveHistory(){
         mctx.getImageData(0,0,imgW,imgH)
     );
 
-    if(history.length > 30){
+    // ★ここの「30」の数値を5〜8などに変更することで、Undo用のメモリ消費をコントロールできます
+    if(history.length > 8){
 
         history.shift();
     }
@@ -578,6 +628,24 @@ function hidePanels(){
         panel.classList.remove('show');
     });
 }
+
+/* 原案メモ帳パネルの表示・非表示切り替えロジック */
+function toggleMemoPanel(){
+    const memoPanel = document.getElementById('memo-panel');
+    memoPanel.classList.toggle('show');
+}
+
+/* アプリ起動時に前回のメモ内容を復元し、入力ごとに自動保存するイベント */
+document.addEventListener('DOMContentLoaded', () => {
+    const memoInput = document.getElementById('memo-input');
+    const savedMemo = localStorage.getItem('mrm_saved_memo');
+    if (savedMemo) {
+        memoInput.value = savedMemo;
+    }
+    memoInput.addEventListener('input', (e) => {
+        localStorage.setItem('mrm_saved_memo', e.target.value);
+    });
+});
 
 function getPos(e){
 
