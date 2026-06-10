@@ -242,6 +242,93 @@ input[type="range"]{
 .hidden{
     display:none;
 }
+
+/* 横書き専用コントロールの無効状態 */
+.row-disabled {
+    opacity: 0.38;
+    pointer-events: none;
+}
+
+.row-disabled label,
+.row-disabled input,
+.row-disabled select {
+    cursor: not-allowed;
+}
+
+/* コンパクトテキストパネル用 */
+.panel {
+    padding: 8px 10px;
+}
+
+.text-compact-input {
+    width: 100%;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 10px;
+    padding: 7px 10px;
+    font-size: 14px;
+    resize: none;
+    min-height: 52px;
+    max-height: 80px;
+    margin-bottom: 7px;
+    display: block;
+    box-sizing: border-box;
+}
+
+/* 3列グリッド（方向・フォント・文字色） */
+.ctrl-grid3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 7px;
+}
+
+.cg {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cg label {
+    font-size: 10px;
+    color: #aaa;
+}
+
+.cg select {
+    width: 100%;
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 5px 4px;
+    font-size: 12px;
+}
+
+/* スライダー行：ラベル＋値＋スライダーを横並び */
+.slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 7px;
+}
+
+.slider-label {
+    font-size: 11px;
+    color: #aaa;
+    white-space: nowrap;
+    min-width: 58px;
+}
+
+.slider-row input[type="range"] {
+    flex: 1;
+}
+
+/* ボタン行の余白も詰める */
+.action-btn {
+    padding: 11px;
+    font-size: 14px;
+}
 </style>
 </head>
 <body>
@@ -330,76 +417,73 @@ input[type="range"]{
     <div class="panel"
     id="text-panel">
 
-        <div class="row">
-
-            <div class="group">
-
-                <label>テキスト</label>
-
-                <textarea id="text-input">こんにちは
+        <!-- テキスト入力 -->
+        <textarea id="text-input"
+        class="text-compact-input">こんにちは
 縦書き対応です</textarea>
 
-            </div>
+        <!-- 3列：方向・フォント・文字色 -->
+        <div class="ctrl-grid3">
 
-        </div>
-
-        <div class="row">
-
-            <div class="group">
-
+            <div class="cg">
                 <label>方向</label>
-
                 <select id="text-direction">
                     <option value="horizontal">横書き</option>
                     <option value="vertical">縦書き</option>
                 </select>
-
             </div>
 
-            <div class="group">
-
+            <div class="cg">
                 <label>フォント</label>
-
                 <select id="font-family">
                     <option value="sans-serif">ゴシック</option>
                     <option value="serif">明朝</option>
                     <option value="cursive">手書き</option>
                 </select>
-
             </div>
 
-        </div>
-
-        <div class="row">
-
-            <div class="group">
-
-                <label>サイズ</label>
-
-                <input type="range"
-                id="text-size"
-                min="0.5"
-                max="10"
-                step="0.1"
-                value="2">
-
-            </div>
-
-            <div class="group">
-
+            <div class="cg">
                 <label>文字色</label>
-
                 <select id="text-color">
                     <option value="#ffffff">白</option>
                     <option value="#000000">黒</option>
                     <option value="#ff0000">赤</option>
                 </select>
-
             </div>
 
         </div>
 
-        <div class="row">
+        <!-- サイズスライダー -->
+        <div class="slider-row">
+            <span class="slider-label">サイズ</span>
+            <input type="range"
+            id="text-size"
+            min="0.5" max="10" step="0.1" value="2">
+        </div>
+
+        <!-- 角度・背景（横書き専用） -->
+        <div id="row-horizontal-only">
+
+            <div class="slider-row">
+                <span class="slider-label">角度&thinsp;<span id="angle-val">0°</span></span>
+                <input type="range"
+                id="text-angle"
+                min="-45" max="45" step="1" value="0">
+            </div>
+
+            <div class="cg" style="margin-bottom:8px">
+                <label>文字背景</label>
+                <select id="text-bg">
+                    <option value="none">なし</option>
+                    <option value="auto-black">黒</option>
+                    <option value="auto-white">白</option>
+                </select>
+            </div>
+
+        </div>
+
+        <!-- ボタン -->
+        <div class="row" style="margin-bottom:0">
 
             <button class="action-btn secondary"
             onclick="cancelText()">
@@ -877,57 +961,97 @@ function drawText(ctx){
 
     const size = 20 * textScale;
 
-    ctx.save();
-
-    ctx.font =
-    `bold ${size}px ${font}`;
-
-    ctx.fillStyle = color;
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    const lineHeight = size * 1.2;
 
     const lines = txt.split('\n');
 
-    const lineHeight = size * 1.2;
+    ctx.save();
+
+    ctx.font = `bold ${size}px ${font}`;
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
 
     // horizontal
     if(direction === "horizontal"){
 
-        lines.forEach((line,index)=>{
+        // --- 角度取得（横書き専用） ---
+        const angleDeg =
+        parseFloat(
+            document.getElementById('text-angle').value
+        );
+        const angleRad = angleDeg * Math.PI / 180;
+
+        // --- 背景枠 ---
+        const bgSelect =
+        document.getElementById('text-bg').value;
+
+        // テキストブロック全体のサイズを計算
+        const blockW = (() => {
+            let max = 0;
+            lines.forEach(line => {
+                const w = ctx.measureText(line).width;
+                if(w > max) max = w;
+            });
+            return max;
+        })();
+        const blockH = lines.length * lineHeight;
+
+        // 中心を軸に回転
+        ctx.translate(textX, textY);
+        ctx.rotate(angleRad);
+
+        // 背景枠描画（文字より先）
+        if(bgSelect !== "none"){
+
+            const padX = size * 0.5;
+            const padY = size * 0.3;
+            const rw = blockW + padX * 2;
+            const rh = blockH + padY * 2;
+            const rx = -rw / 2;
+            const ry = -rh / 2;
+            const radius = size * 0.3;
+
+            ctx.fillStyle =
+            bgSelect === "auto-black" ? "#000000" : "#ffffff";
+
+            ctx.beginPath();
+            ctx.roundRect(rx, ry, rw, rh, radius);
+            ctx.fill();
+
+            // 文字色を再セット
+            ctx.fillStyle = color;
+        }
+
+        // テキスト描画（座標は translate 後なので原点基準）
+        lines.forEach((line, index) => {
 
             ctx.fillText(
                 line,
-                textX,
-                textY +
-                (index - (lines.length - 1)/2)
-                * lineHeight
+                0,
+                (index - (lines.length - 1) / 2) * lineHeight
             );
         });
 
     }else{
 
-        // vertical right to left
+        // vertical right to left（角度・背景なし）
 
-        lines.forEach((line,lineIndex)=>{
+        lines.forEach((line, lineIndex) => {
 
-            const chars =
-            Array.from(line);
+            const chars = Array.from(line);
 
-            chars.forEach((char,charIndex)=>{
+            chars.forEach((char, charIndex) => {
 
                 let x =
                 textX -
-                (lineIndex -
-                (lines.length - 1)/2)
+                (lineIndex - (lines.length - 1) / 2)
                 * lineHeight;
 
                 let y =
-                textY +
-                charIndex * lineHeight;
+                textY + charIndex * lineHeight;
 
                 if("、。,.」』】".includes(char)){
-
                     x += size * .25;
                     y -= size * .15;
                 }
@@ -936,15 +1060,13 @@ function drawText(ctx){
 
                 if("ー".includes(char)){
 
-                    ctx.translate(x,y);
-
+                    ctx.translate(x, y);
                     ctx.rotate(Math.PI / 2);
-
-                    ctx.fillText(char,0,0);
+                    ctx.fillText(char, 0, 0);
 
                 }else{
 
-                    ctx.fillText(char,x,y);
+                    ctx.fillText(char, x, y);
                 }
 
                 ctx.restore();
@@ -984,7 +1106,22 @@ document.getElementById('text-input')
 .oninput = renderTextPreview;
 
 document.getElementById('text-direction')
-.onchange = renderTextPreview;
+.onchange = () => {
+    const dir =
+    document.getElementById('text-direction').value;
+    const row =
+    document.getElementById('row-horizontal-only');
+
+    if(dir === "vertical"){
+        row.style.opacity = "0.38";
+        row.style.pointerEvents = "none";
+    } else {
+        row.style.opacity = "1";
+        row.style.pointerEvents = "";
+    }
+
+    renderTextPreview();
+};
 
 document.getElementById('font-family')
 .onchange = renderTextPreview;
@@ -993,7 +1130,45 @@ document.getElementById('text-size')
 .oninput = renderTextPreview;
 
 document.getElementById('text-color')
-.onchange = renderTextPreview;
+.onchange = () => {
+    // 文字色と背景色の連動：同色なら反対色に自動切替
+    const color =
+    document.getElementById('text-color').value;
+    const bgSel =
+    document.getElementById('text-bg');
+
+    if(bgSel.value === "auto-black" && color === "#000000"){
+        bgSel.value = "auto-white";
+    } else if(bgSel.value === "auto-white" && color === "#ffffff"){
+        bgSel.value = "auto-black";
+    }
+
+    renderTextPreview();
+};
+
+document.getElementById('text-bg')
+.onchange = () => {
+    // 背景色変更時も文字色との衝突チェック
+    const color =
+    document.getElementById('text-color').value;
+    const bgVal =
+    document.getElementById('text-bg').value;
+
+    if(bgVal === "auto-black" && color === "#000000"){
+        document.getElementById('text-color').value = "#ffffff";
+    } else if(bgVal === "auto-white" && color === "#ffffff"){
+        document.getElementById('text-color').value = "#000000";
+    }
+
+    renderTextPreview();
+};
+
+document.getElementById('text-angle')
+.oninput = e => {
+    document.getElementById('angle-val').textContent =
+    e.target.value + '°';
+    renderTextPreview();
+};
 
 function openImage(){
 
