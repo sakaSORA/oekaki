@@ -110,7 +110,7 @@ canvas{
     background:rgba(25,25,25,.96);
     backdrop-filter:blur(10px);
     border-top:1px solid #333;
-    padding:8px 10px; /* 統一 */
+    padding:8px 10px;
     z-index:2000;
     display:none;
 }
@@ -313,11 +313,50 @@ input[type="range"]{
     white-space: nowrap;
     min-width: 58px;
 }
+
+.slider-row input[type="range"] {
+    flex: 1;
+}
+
+/* トースト通知用スタイル */
+#toast-container {
+    position: absolute;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 9999;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 90%;
+    max-width: 320px;
+}
+
+.toast {
+    background: rgba(20, 20, 20, 0.9);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    border: 1px solid #333;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: opacity 0.3s, transform 0.3s;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
 </style>
 </head>
 <body>
 
 <div id="viewport">
+    <div id="toast-container"></div>
 
     <div class="top-ui">
         <button class="top-btn memo-btn" onclick="toggleMemoPanel()">原案メモ</button>
@@ -433,21 +472,89 @@ input[type="range"]{
 <input type="file" id="file-input" accept="image/*" class="hidden">
 
 <script>
+/* ============================================================
+   ① 汎用トースト通知システム
+   ============================================================ */
+function showSaveToast(message) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerText = message;
+    container.appendChild(toast);
+
+    setTimeout(() => toast.classList.add('show'), 50);
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        toast.addEventListener('transitionend', () => toast.remove());
+    }, 2500);
+}
+
+/* ============================================================
+   ② IndexedDB 大容量ストレージ管理層
+   ============================================================ */
+const DB_NAME = 'MangaRetouchDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'app_state';
+
+function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+function getStorageData(key) {
+    return initDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(STORE_NAME, 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    });
+}
+
+function setStorageData(key, value) {
+    return initDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(STORE_NAME, 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.put(value, key);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    });
+}
+
+/* ============================================================
+   メインロジック / 状態宣言
+   ============================================================ */
 const main = document.getElementById('main');
 const temp = document.getElementById('temp');
 
-const mctx = main.getContext('2d');
+const mctx = main.getContext('2d', { willReadFrequently: true });
 const tctx = temp.getContext('2d');
 
 const wrap = document.getElementById('canvas-wrap');
 const viewport = document.getElementById('viewport');
+
+// メモリ破裂を防ぐ最大キャンバスサイズ境界（2048px）
+const MAX_CANVAS_SIZE = 2048;
 
 let imgW = 1080;
 let imgH = 1920;
 
 main.width = imgW;
 main.height = imgH;
-
 temp.width = imgW;
 temp.height = imgH;
 
@@ -551,6 +658,7 @@ function toggleMemoPanel(){
     memoPanel.classList.toggle('show');
 }
 
+// 起動時の初期化およびIndexedDBからの自動セーブデータの復元
 document.addEventListener('DOMContentLoaded', () => {
     const memoInput = document.getElementById('memo-input');
     const savedMemo = localStorage.getItem('mrm_saved_memo');
@@ -560,7 +668,70 @@ document.addEventListener('DOMContentLoaded', () => {
     memoInput.addEventListener('input', (e) => {
         localStorage.setItem('mrm_saved_memo', e.target.value);
     });
+
+    getStorageData('canvas_backup_blob').then(blob => {
+        if (!blob) return;
+        const img = new Image();
+        img.onload = () => {
+            imgW = img.width;
+            imgH = img.height;
+            main.width = imgW;
+            main.height = imgH;
+            temp.width = imgW;
+            temp.height = imgH;
+            wrap.style.width = imgW + 'px';
+            wrap.style.height = imgH + 'px';
+            mctx.clearRect(0, 0, imgW, imgH);
+            mctx.drawImage(img, 0, 0);
+            
+            getStorageData('canvas_backup_state').then(state => {
+                if (state) {
+                    textX = state.textX ?? (imgW / 2);
+                    textY = state.textY ?? (imgH / 2);
+                    scale = state.scale ?? scale;
+                    panX = state.panX ?? panX;
+                    panY = state.panY ?? panY;
+                    updateTransform();
+                } else {
+                    fitCanvas();
+                }
+                history = [];
+                redoStack = [];
+                saveHistory();
+                showSaveToast("📥 前回の編集状態を自動復元しました");
+            });
+        };
+        img.src = URL.createObjectURL(blob);
+    }).catch(err => console.error("データ自動復元失敗:", err));
 });
+
+/* ============================================================
+   【戻るボタン・タブ閉じ対策】自動保存の集約定義
+   ============================================================ */
+function triggerAutoSave() {
+    main.toBlob(blob => {
+        if (!blob) return;
+        setStorageData('canvas_backup_blob', blob).then(() => {
+            const state = { textX, textY, scale, panX, panY };
+            return setStorageData('canvas_backup_state', state);
+        }).then(() => {
+            console.log('IndexedDBへの自動セーブ成功');
+        }).catch(err => {
+            console.error('自動セーブ失敗:', err);
+        });
+    }, 'image/png');
+}
+
+// ① ホームボタン押下時・別アプリへの切り替え時
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        triggerAutoSave();
+    }
+});
+
+// ② 「戻る」ボタン押下、ブラウザタブ閉じ、ページ移動、セッション破棄時を網羅
+window.addEventListener('pagehide', triggerAutoSave);
+window.addEventListener('beforeunload', triggerAutoSave);
 
 function getPos(e){
     const rect = wrap.getBoundingClientRect();
@@ -736,7 +907,6 @@ function drawText(ctx){
 
             ctx.fillStyle = bgSelect === "auto-black" ? "#000000" : "#ffffff";
             ctx.beginPath();
-            // 古い環境用の互換性フォールバック
             if (typeof ctx.roundRect === 'function') {
                 ctx.roundRect(rx, ry, rw, rh, radius);
             } else {
@@ -751,7 +921,6 @@ function drawText(ctx){
         });
 
     }else{
-        // 【修正】縦書き時の配置軸を中心（センター）に変更
         const totalLines = lines.length;
         
         lines.forEach((line, lineIndex) => {
@@ -759,9 +928,7 @@ function drawText(ctx){
             const totalChars = chars.length;
 
             chars.forEach((char, charIndex) => {
-                // 行全体のセンターからのオフセット
                 let x = textX - (lineIndex - (totalLines - 1) / 2) * lineHeight;
-                // 各文字の垂直センターからのオフセット
                 let y = textY + (charIndex - (totalChars - 1) / 2) * lineHeight;
 
                 if("、。,.」』】".includes(char)){
@@ -809,7 +976,7 @@ document.getElementById('text-direction').onchange = () => {
     const row = document.getElementById('row-horizontal-only');
 
     if(dir === "vertical"){
-        row.classList.add('row-disabled'); // 【改善】CSSクラスでの制御に変更
+        row.classList.add('row-disabled');
     } else {
         row.classList.remove('row-disabled');
     }
@@ -852,6 +1019,53 @@ function openImage(){
     document.getElementById('file-input').click();
 }
 
+document.getElementById('file-input').onchange = e=>{
+    const file = e.target.files[0];
+    if(!file) return;
+
+    const reader = new FileReader();
+    reader.onload = ev=>{
+        const img = new Image();
+        img.onload = ()=>{
+            let w = img.width;
+            let h = img.height;
+
+            if(w > MAX_CANVAS_SIZE || h > MAX_CANVAS_SIZE){
+                const ratio = Math.min(MAX_CANVAS_SIZE / w, MAX_CANVAS_SIZE / h);
+                w = Math.round(w * ratio);
+                h = Math.round(h * ratio);
+                showSaveToast(`📐 ${img.width}×${img.height} → ${w}×${h} にリサイズしました`);
+            }
+
+            imgW = w;
+            imgH = h;
+
+            main.width  = imgW;
+            main.height = imgH;
+            temp.width  = imgW;
+            temp.height = imgH;
+
+            wrap.style.width  = imgW + 'px';
+            wrap.style.height = imgH + 'px';
+
+            const offscreen = document.createElement('canvas');
+            offscreen.width  = imgW;
+            offscreen.height = imgH;
+            offscreen.getContext('2d').drawImage(img, 0, 0, imgW, imgH);
+
+            mctx.clearRect(0, 0, imgW, imgH);
+            mctx.drawImage(offscreen, 0, 0);
+
+            fitCanvas();
+            history = [];
+            redoStack = [];
+            saveHistory();
+        };
+        img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+};
+
 function saveImage(){
     main.toBlob(blob=>{
         const url = URL.createObjectURL(blob);
@@ -860,6 +1074,7 @@ function saveImage(){
         a.download = 'edited_image.jpg';
         a.click();
         URL.revokeObjectURL(url);
+        showSaveToast("💾 画像を保存しました");
     },'image/jpeg',0.95);
 }
 
@@ -881,192 +1096,13 @@ document.getElementById('pen-size').oninput = e=>{
 };
 
 /* ============================================================
-   ① 自動保存（ステートセーブ）
-   visibilitychange でバックグラウンド移行を検知し、
-   Canvas の内容を IndexedDB に保存する。
-   復元は次回起動時に自動的に行われる。
-   ============================================================ */
-const AUTO_SAVE_DB  = 'mrm_autosave';
-const AUTO_SAVE_KEY = 'canvas_state';
-const AUTO_SAVE_META = 'canvas_meta';
-
-/** IndexedDB を開いて Promise で返す */
-function openDB() {
-    return new Promise((resolve, reject) => {
-        const req = indexedDB.open(AUTO_SAVE_DB, 1);
-        req.onupgradeneeded = e => {
-            e.target.result.createObjectStore('data');
-        };
-        req.onsuccess = e => resolve(e.target.result);
-        req.onerror   = () => reject(req.error);
-    });
-}
-
-/** Canvas の現在状態を IndexedDB に保存 */
-async function autoSaveState() {
-    if (!imgW || !imgH) return; // 画像未読込なら何もしない
-    try {
-        const db   = await openDB();
-        const blob = await new Promise(res => main.toBlob(res, 'image/png'));
-        const tx   = db.transaction('data', 'readwrite');
-        const st   = tx.objectStore('data');
-        st.put(blob,                      AUTO_SAVE_KEY);
-        st.put({ w: imgW, h: imgH },      AUTO_SAVE_META);
-        await new Promise((res, rej) => {
-            tx.oncomplete = res;
-            tx.onerror    = () => rej(tx.error);
-        });
-        showSaveToast('💾 自動保存しました');
-    } catch(err) {
-        console.warn('autoSave failed:', err);
-    }
-}
-
-/** 自動保存データを復元する */
-async function restoreAutoSave() {
-    try {
-        const db   = await openDB();
-        const tx   = db.transaction('data', 'readonly');
-        const st   = tx.objectStore('data');
-
-        const blob = await new Promise((res, rej) => {
-            const r = st.get(AUTO_SAVE_KEY);
-            r.onsuccess = () => res(r.result);
-            r.onerror   = () => rej(r.error);
-        });
-        const meta = await new Promise((res, rej) => {
-            const r = st.get(AUTO_SAVE_META);
-            r.onsuccess = () => res(r.result);
-            r.onerror   = () => rej(r.error);
-        });
-
-        if (!blob || !meta) return; // 保存データなし
-
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        img.onload = () => {
-            imgW = meta.w;
-            imgH = meta.h;
-            main.width  = imgW;
-            main.height = imgH;
-            temp.width  = imgW;
-            temp.height = imgH;
-            wrap.style.width  = imgW + 'px';
-            wrap.style.height = imgH + 'px';
-            mctx.clearRect(0, 0, imgW, imgH);
-            mctx.drawImage(img, 0, 0);
-            URL.revokeObjectURL(url);
-            fitCanvas();
-            history = [];
-            redoStack = [];
-            saveHistory();
-            showSaveToast('🔄 前回の作業を復元しました');
-        };
-        img.src = url;
-    } catch(err) {
-        console.warn('restoreAutoSave failed:', err);
-    }
-}
-
-/** バックグラウンド移行時に保存 */
-document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-        autoSaveState();
-    }
-});
-
-/** ページを閉じる直前にも保存を試みる */
-window.addEventListener('pagehide', autoSaveState);
-
-/** 起動時に復元 */
-restoreAutoSave();
-
-/** 保存完了トースト通知 */
-function showSaveToast(msg) {
-    let toast = document.getElementById('save-toast');
-    if (!toast) {
-        toast = document.createElement('div');
-        toast.id = 'save-toast';
-        Object.assign(toast.style, {
-            position: 'fixed', bottom: '90px', left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(0,0,0,0.75)', color: '#fff',
-            padding: '8px 18px', borderRadius: '20px',
-            fontSize: '13px', zIndex: '9999',
-            transition: 'opacity 0.4s', pointerEvents: 'none'
-        });
-        document.body.appendChild(toast);
-    }
-    toast.textContent = msg;
-    toast.style.opacity = '1';
-    clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
-}
-
-/* ============================================================
-   ② Canvas サイズ最適化
-   モバイルで高解像度画像（4K など）をそのまま読み込むと
-   メモリを大量消費するため、最大 2048px にリサイズして読込む。
-   ============================================================ */
-const MAX_CANVAS_SIZE = 2048; // 縦横いずれも超えたらリサイズ
-
-document.getElementById('file-input').onchange = e => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = ev => {
-        const img = new Image();
-        img.onload = () => {
-            let w = img.width;
-            let h = img.height;
-
-            // 長辺が MAX_CANVAS_SIZE を超える場合はアスペクト比を保ってリサイズ
-            if (w > MAX_CANVAS_SIZE || h > MAX_CANVAS_SIZE) {
-                const ratio = Math.min(MAX_CANVAS_SIZE / w, MAX_CANVAS_SIZE / h);
-                w = Math.round(w * ratio);
-                h = Math.round(h * ratio);
-                showSaveToast(`📐 ${img.width}×${img.height} → ${w}×${h} にリサイズしました`);
-            }
-
-            imgW = w;
-            imgH = h;
-
-            main.width  = imgW;
-            main.height = imgH;
-            temp.width  = imgW;
-            temp.height = imgH;
-
-            wrap.style.width  = imgW + 'px';
-            wrap.style.height = imgH + 'px';
-
-            // オフスクリーンキャンバスでリサイズ描画
-            const offscreen = document.createElement('canvas');
-            offscreen.width  = imgW;
-            offscreen.height = imgH;
-            offscreen.getContext('2d').drawImage(img, 0, 0, imgW, imgH);
-
-            mctx.clearRect(0, 0, imgW, imgH);
-            mctx.drawImage(offscreen, 0, 0);
-
-            fitCanvas();
-            history = [];
-            redoStack = [];
-            saveHistory();
-        };
-        img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-};
-
-/* ============================================================
    ③ PWA — Service Worker 登録
    ============================================================ */
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('sw.js')
             .then(reg => console.log('[PWA] SW registered:', reg.scope))
-            .catch(err => console.warn('[PWA] SW registration failed:', err));
+            .catch(err => console.log('[PWA] SW registration failed:', err));
     });
 }
 </script>
