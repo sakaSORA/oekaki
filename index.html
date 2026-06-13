@@ -669,8 +669,8 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('mrm_saved_memo', e.target.value);
     });
 
-    getStorageData('canvas_backup_blob').then(blob => {
-        if (!blob) return;
+    // 復元優先順: IndexedDB（高画質）→ localStorage 緊急バックアップ（戻るボタン対策）
+    function restoreFromDataUrl(dataUrl, stateObj) {
         const img = new Image();
         img.onload = () => {
             imgW = img.width;
@@ -683,55 +683,89 @@ document.addEventListener('DOMContentLoaded', () => {
             wrap.style.height = imgH + 'px';
             mctx.clearRect(0, 0, imgW, imgH);
             mctx.drawImage(img, 0, 0);
-            
-            getStorageData('canvas_backup_state').then(state => {
-                if (state) {
-                    textX = state.textX ?? (imgW / 2);
-                    textY = state.textY ?? (imgH / 2);
-                    scale = state.scale ?? scale;
-                    panX = state.panX ?? panX;
-                    panY = state.panY ?? panY;
-                    updateTransform();
-                } else {
-                    fitCanvas();
-                }
-                history = [];
-                redoStack = [];
-                saveHistory();
-                showSaveToast("📥 前回の編集状態を自動復元しました");
-            });
+            if (stateObj) {
+                textX = stateObj.textX ?? (imgW / 2);
+                textY = stateObj.textY ?? (imgH / 2);
+                scale = stateObj.scale ?? scale;
+                panX = stateObj.panX ?? panX;
+                panY = stateObj.panY ?? panY;
+                updateTransform();
+            } else {
+                fitCanvas();
+            }
+            history = [];
+            redoStack = [];
+            saveHistory();
+            showSaveToast("📥 前回の編集状態を自動復元しました");
         };
-        img.src = URL.createObjectURL(blob);
+        img.src = dataUrl;
+    }
+
+    getStorageData('canvas_backup_blob').then(blob => {
+        if (blob) {
+            // IndexedDB に保存データあり → 優先して使用
+            const dataUrl = URL.createObjectURL(blob);
+            getStorageData('canvas_backup_state').then(state => {
+                restoreFromDataUrl(dataUrl, state);
+            });
+        } else {
+            // IndexedDB になければ localStorage の緊急バックアップを確認
+            const emergencyUrl = localStorage.getItem('mrm_emergency_canvas');
+            if (emergencyUrl) {
+                const stateRaw = localStorage.getItem('mrm_emergency_state');
+                const state = stateRaw ? JSON.parse(stateRaw) : null;
+                restoreFromDataUrl(emergencyUrl, state);
+            }
+        }
     }).catch(err => console.error("データ自動復元失敗:", err));
 });
 
 /* ============================================================
-   【戻るボタン・タブ閉じ対策】自動保存の集約定義
+   【自動保存】2段階戦略
+   ・通常時（visibilitychange hidden）: IndexedDB に高画質で非同期保存
+   ・離脱直前（pagehide / beforeunload）: localStorage に同期保存（戻るボタン対策）
    ============================================================ */
-function triggerAutoSave() {
+
+// --- 通常バックグラウンド退避（高画質・非同期） ---
+function asyncAutoSave() {
     main.toBlob(blob => {
         if (!blob) return;
         setStorageData('canvas_backup_blob', blob).then(() => {
             const state = { textX, textY, scale, panX, panY };
             return setStorageData('canvas_backup_state', state);
         }).then(() => {
-            console.log('IndexedDBへの自動セーブ成功');
+            console.log('[AutoSave] IndexedDB 保存成功');
         }).catch(err => {
-            console.error('自動セーブ失敗:', err);
+            console.error('[AutoSave] IndexedDB 保存失敗:', err);
         });
     }, 'image/png');
 }
 
-// ① ホームボタン押下時・別アプリへの切り替え時
+// --- 離脱直前バックアップ（同期・localStorage）---
+// toBlob は非同期なので、離脱直前は toDataURL で同期的に取得する
+// 画質は 0.7 に抑えてlocalStorage(5MB)の制限内に収める
+function syncEmergencySave() {
+    try {
+        const dataUrl = main.toDataURL('image/jpeg', 0.7);
+        localStorage.setItem('mrm_emergency_canvas', dataUrl);
+        const state = JSON.stringify({ textX, textY, scale, panX, panY });
+        localStorage.setItem('mrm_emergency_state', state);
+        console.log('[AutoSave] localStorage 緊急保存成功');
+    } catch (e) {
+        console.error('[AutoSave] localStorage 緊急保存失敗 (容量超過の可能性):', e);
+    }
+}
+
+// ① ホームボタン・別アプリ切り替え → 非同期で高画質保存
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-        triggerAutoSave();
+        asyncAutoSave();
     }
 });
 
-// ② 「戻る」ボタン押下、ブラウザタブ閉じ、ページ移動、セッション破棄時を網羅
-window.addEventListener('pagehide', triggerAutoSave);
-window.addEventListener('beforeunload', triggerAutoSave);
+// ② 戻るボタン・タブ閉じ・ページ移動 → 同期で緊急保存
+window.addEventListener('pagehide', syncEmergencySave);
+window.addEventListener('beforeunload', syncEmergencySave);
 
 function getPos(e){
     const rect = wrap.getBoundingClientRect();
