@@ -669,7 +669,7 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('mrm_saved_memo', e.target.value);
     });
 
-    // 復元優先順: IndexedDB（高画質）→ localStorage 緊急バックアップ（戻るボタン対策）
+    // 復元: IndexedDB と localStorage のタイムスタンプを比較し、新しい方を使う
     function restoreFromDataUrl(dataUrl, stateObj) {
         const img = new Image();
         img.onload = () => {
@@ -701,22 +701,25 @@ document.addEventListener('DOMContentLoaded', () => {
         img.src = dataUrl;
     }
 
+    const emergencyUrl = localStorage.getItem('mrm_emergency_canvas');
+    const emergencyStateRaw = localStorage.getItem('mrm_emergency_state');
+    const emergencyState = emergencyStateRaw ? JSON.parse(emergencyStateRaw) : null;
+    const emergencyTime = emergencyState?.savedAt ?? 0;
+
     getStorageData('canvas_backup_blob').then(blob => {
-        if (blob) {
-            // IndexedDB に保存データあり → 優先して使用
-            const dataUrl = URL.createObjectURL(blob);
-            getStorageData('canvas_backup_state').then(state => {
-                restoreFromDataUrl(dataUrl, state);
-            });
-        } else {
-            // IndexedDB になければ localStorage の緊急バックアップを確認
-            const emergencyUrl = localStorage.getItem('mrm_emergency_canvas');
-            if (emergencyUrl) {
-                const stateRaw = localStorage.getItem('mrm_emergency_state');
-                const state = stateRaw ? JSON.parse(stateRaw) : null;
-                restoreFromDataUrl(emergencyUrl, state);
+        getStorageData('canvas_backup_state').then(idbState => {
+            const idbTime = idbState?.savedAt ?? 0;
+
+            if (blob && idbTime >= emergencyTime) {
+                // IndexedDB の方が新しい（またはlocalStorageに保存なし）
+                console.log('[Restore] IndexedDB を使用 (savedAt:', idbTime, ')');
+                restoreFromDataUrl(URL.createObjectURL(blob), idbState);
+            } else if (emergencyUrl) {
+                // localStorage の緊急バックアップの方が新しい
+                console.log('[Restore] localStorage 緊急バックアップを使用 (savedAt:', emergencyTime, ')');
+                restoreFromDataUrl(emergencyUrl, emergencyState);
             }
-        }
+        });
     }).catch(err => console.error("データ自動復元失敗:", err));
 });
 
@@ -731,7 +734,7 @@ function asyncAutoSave() {
     main.toBlob(blob => {
         if (!blob) return;
         setStorageData('canvas_backup_blob', blob).then(() => {
-            const state = { textX, textY, scale, panX, panY };
+            const state = { textX, textY, scale, panX, panY, savedAt: Date.now() };
             return setStorageData('canvas_backup_state', state);
         }).then(() => {
             console.log('[AutoSave] IndexedDB 保存成功');
@@ -748,7 +751,7 @@ function syncEmergencySave() {
     try {
         const dataUrl = main.toDataURL('image/jpeg', 0.7);
         localStorage.setItem('mrm_emergency_canvas', dataUrl);
-        const state = JSON.stringify({ textX, textY, scale, panX, panY });
+        const state = JSON.stringify({ textX, textY, scale, panX, panY, savedAt: Date.now() });
         localStorage.setItem('mrm_emergency_state', state);
         console.log('[AutoSave] localStorage 緊急保存成功');
     } catch (e) {
