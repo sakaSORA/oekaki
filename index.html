@@ -651,7 +651,7 @@ function updateTransform(){
 fitCanvas();
 
 function saveHistory(){
-    history.push(mctx.getImageData(0,0,imgW,imgH));
+    history.push(main.toDataURL('image/webp', 0.86));
     if(history.length > 5){
         history.shift();
     }
@@ -663,14 +663,18 @@ saveHistory();
 function undo(){
     if(history.length <= 1) return;
     redoStack.push(history.pop());
-    mctx.putImageData(history[history.length - 1], 0, 0);
+    const img = new Image();
+    img.onload = () => mctx.drawImage(img, 0, 0);
+    img.src = history[history.length - 1];
 }
 
 function redo(){
     if(redoStack.length === 0) return;
     const data = redoStack.pop();
     history.push(data);
-    mctx.putImageData(data,0,0);
+    const img = new Image();
+    img.onload = () => mctx.drawImage(img, 0, 0);
+    img.src = data;
 }
 
 function setMode(m){
