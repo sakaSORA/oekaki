@@ -816,51 +816,43 @@ document.addEventListener('DOMContentLoaded', () => {
             const hasIdb = !!blob;
             const hasEmergency = !!emergencyUrl;
 
-            if (!hasIdb && !hasEmergency) {
-                // 保存データなし → そのまま新規
-                return;
-            }
+            // 保存データなし → そのまま新規
+            if (!hasIdb && !hasEmergency) return;
 
-            if (hasIdb && !hasEmergency) {
-                // IndexedDB のみ → 自動復元
-                restoreFromDataUrl(URL.createObjectURL(blob), idbState, '自動バックアップ');
-                return;
-            }
-
-            if (!hasIdb && hasEmergency) {
-                // 緊急バックアップのみ → 自動復元
-                restoreFromDataUrl(emergencyUrl, emergencyState, '緊急バックアップ（戻るボタン）');
-                return;
-            }
-
-            // 両方ある → ユーザーに選ばせる
+            // 選択肢を構築（存在するものだけ追加）
             const options = [];
 
-            // 新しい方を上に表示
-            const idbEntry = {
-                label: '🖼 自動バックアップ（ホームボタン保存）',
-                desc: '保存日時: ' + fmtTime(idbTime) + '　高画質PNG',
-                dataUrl: URL.createObjectURL(blob),
-                stateObj: idbState,
-                emergency: false
-            };
-            const emEntry = {
-                label: '⚡ 緊急バックアップ（戻るボタン保存）',
-                desc: '保存日時: ' + fmtTime(emergencyTime) + '　JPEG画質',
-                dataUrl: emergencyUrl,
-                stateObj: emergencyState,
-                emergency: true
-            };
-
-            // 新しい方を先頭に
-            if (emergencyTime > idbTime) {
-                options.push(emEntry, idbEntry);
-            } else {
-                options.push(idbEntry, emEntry);
+            if (hasIdb) {
+                options.push({
+                    label: '🖼 自動バックアップ（ホームボタン保存）',
+                    desc: '保存日時: ' + fmtTime(idbTime) + '　高画質PNG',
+                    dataUrl: URL.createObjectURL(blob),
+                    stateObj: idbState,
+                    emergency: false
+                });
             }
 
-            document.getElementById('restore-dialog-desc').textContent =
-                '2つの保存データが見つかりました。どちらから復元しますか？';
+            if (hasEmergency) {
+                options.push({
+                    label: '⚡ 緊急バックアップ（戻るボタン保存）',
+                    desc: '保存日時: ' + fmtTime(emergencyTime) + '　JPEG画質',
+                    dataUrl: emergencyUrl,
+                    stateObj: emergencyState,
+                    emergency: true
+                });
+            }
+
+            // 新しい方を先頭に並べ替え
+            options.sort((a, b) => {
+                const tA = a.stateObj?.savedAt ?? 0;
+                const tB = b.stateObj?.savedAt ?? 0;
+                return tB - tA;
+            });
+
+            const desc = options.length === 1
+                ? '保存データが見つかりました。復元しますか？'
+                : '2つの保存データが見つかりました。どちらから復元しますか？';
+            document.getElementById('restore-dialog-desc').textContent = desc;
             showRestoreDialog(options);
         });
     }).catch(err => console.error("データ自動復元失敗:", err));
