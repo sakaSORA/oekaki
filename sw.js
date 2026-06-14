@@ -1,5 +1,5 @@
 // バージョン管理：アプリを更新した際はここを 'v3', 'v4' と変更してください
-const CACHE_NAME = 'smart-canvas-v18';
+const CACHE_NAME = 'smart-canvas-v19';
 
 // キャッシュするファイルリスト
 const ASSETS = [
