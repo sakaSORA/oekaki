@@ -391,7 +391,7 @@ input[type="range"]{
 .restore-option-btn:active { background: #3a3a3a; }
 .restore-option-btn .opt-title { font-size: 14px; font-weight: bold; margin-bottom: 3px; }
 .restore-option-btn .opt-desc { font-size: 11px; color: #aaa; }
-.restore-option-btn.opt-emergency { border-color: #007aff; background: rgba(0,122,255,0.12); }
+
 .restore-sep { text-align: center; font-size: 11px; color: #666; margin: 2px 0; }
 </style>
 </head>
@@ -776,7 +776,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 container.appendChild(sep);
             }
             const btn = document.createElement('button');
-            btn.className = 'restore-option-btn' + (opt.emergency ? ' opt-emergency' : '');
+            btn.className = 'restore-option-btn';
             btn.innerHTML = '<div class="opt-title">' + opt.label + '</div>' +
                             '<div class="opt-desc">' + opt.desc + '</div>';
             btn.addEventListener('click', () => {
@@ -804,106 +804,48 @@ document.addEventListener('DOMContentLoaded', () => {
         dialog.classList.remove('hidden');
     }
 
-    // 両ストレージからデータを取得して選択肢を構築
-    const emergencyUrl = localStorage.getItem('mrm_emergency_canvas');
-    const emergencyStateRaw = localStorage.getItem('mrm_emergency_state');
-    const emergencyState = emergencyStateRaw ? JSON.parse(emergencyStateRaw) : null;
-    const emergencyTime = emergencyState?.savedAt ?? 0;
-
+    // IndexedDB から自動バックアップを取得して選択ダイアログを表示
     getStorageData('canvas_backup_blob').then(blob => {
+        if (!blob) return; // 保存データなし → 新規
         getStorageData('canvas_backup_state').then(idbState => {
             const idbTime = idbState?.savedAt ?? 0;
-            const hasIdb = !!blob;
-            const hasEmergency = !!emergencyUrl;
-
-            // 保存データなし → そのまま新規
-            if (!hasIdb && !hasEmergency) return;
-
-            // 選択肢を構築（存在するものだけ追加）
-            const options = [];
-
-            if (hasIdb) {
-                options.push({
-                    label: '🖼 自動バックアップ（ホームボタン保存）',
-                    desc: '保存日時: ' + fmtTime(idbTime) + '　高画質PNG',
-                    dataUrl: URL.createObjectURL(blob),
-                    stateObj: idbState,
-                    emergency: false
-                });
-            }
-
-            if (hasEmergency) {
-                options.push({
-                    label: '⚡ 緊急バックアップ（戻るボタン保存）',
-                    desc: '保存日時: ' + fmtTime(emergencyTime) + '　JPEG画質',
-                    dataUrl: emergencyUrl,
-                    stateObj: emergencyState,
-                    emergency: true
-                });
-            }
-
-            // 新しい方を先頭に並べ替え
-            options.sort((a, b) => {
-                const tA = a.stateObj?.savedAt ?? 0;
-                const tB = b.stateObj?.savedAt ?? 0;
-                return tB - tA;
-            });
-
-            const desc = options.length === 1
-                ? '保存データが見つかりました。復元しますか？'
-                : '2つの保存データが見つかりました。どちらから復元しますか？';
-            document.getElementById('restore-dialog-desc').textContent = desc;
+            const options = [{
+                label: '🖼 自動バックアップ',
+                desc: '保存日時: ' + fmtTime(idbTime) + '　高画質PNG',
+                dataUrl: URL.createObjectURL(blob),
+                stateObj: idbState,
+            }];
+            document.getElementById('restore-dialog-desc').textContent =
+                '自動バックアップが見つかりました。';
             showRestoreDialog(options);
         });
     }).catch(err => console.error("データ自動復元失敗:", err));
 });
 
 /* ============================================================
-   【自動保存】戦略
-   iOS Safari では pagehide/beforeunload が BFCache により発火しないため、
-   visibilitychange: hidden を唯一の保存トリガーとして使用する。
-
-   戻るボタン押下時も iOS Safari は hidden を発火させる（BFCache 移行前）ので
-   両方のケースをこのイベント1本で確実に捕捉できる。
-
-   保存先の使い分け：
-   ・IndexedDB（高画質PNG）: 非同期保存。ホームボタン・通常バックグラウンド
-   ・localStorage（JPEG圧縮）: 同期保存。IndexedDB 完了保証ができない高速離脱対策
-     → 両方同時に書き込み、起動時に新しい方をユーザーが選択
+   【自動保存】IndexedDB のみに保存
+   visibilitychange: hidden を唯一のトリガーとする
+   （iOS Safari の戻るボタンも BFCache 移行前にこのイベントを発火する）
+   連続発火防止フラグ付き
    ============================================================ */
 
-// 原因2対策: 連続発火防止フラグ
 let _autoSaving = false;
 
 function autoSave() {
-    // 原因2対策: 保存中なら2重実行しない
     if (_autoSaving) {
         console.log('[AutoSave] 保存中のためスキップ');
         return;
     }
     _autoSaving = true;
 
-    // 原因1対策: タイムスタンプを1つ生成してlocalStorageとIndexedDB両方に使う
     const savedAt = Date.now();
 
-    // ── 同期保存（localStorage）: 必ず先に実行して離脱に備える ──
-    try {
-        const dataUrl = main.toDataURL('image/jpeg', 0.7);
-        localStorage.setItem('mrm_emergency_canvas', dataUrl);
-        localStorage.setItem('mrm_emergency_state', JSON.stringify({ textX, textY, scale, panX, panY, savedAt }));
-        console.log('[AutoSave] localStorage 保存成功 savedAt:', savedAt);
-    } catch (e) {
-        console.error('[AutoSave] localStorage 保存失敗 (容量超過の可能性):', e);
-    }
-
-    // ── 非同期保存（IndexedDB）: 高画質PNG。同じsavedAtを使うので逆転しない ──
     main.toBlob(blob => {
         if (!blob) {
             _autoSaving = false;
             return;
         }
         setStorageData('canvas_backup_blob', blob).then(() => {
-            // 原因1対策: localStorageと同じsavedAtを使用
             return setStorageData('canvas_backup_state', { textX, textY, scale, panX, panY, savedAt });
         }).then(() => {
             console.log('[AutoSave] IndexedDB 保存成功 savedAt:', savedAt);
@@ -915,16 +857,12 @@ function autoSave() {
     }, 'image/png');
 }
 
-// visibilitychange: hidden を唯一のトリガーとする
-// （iOS Safari の戻るボタンも BFCache 移行前にこのイベントを発火する）
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
         autoSave();
     }
 });
 
-// pagehide / beforeunload は補助的に残す（Android Chrome・デスクトップ向け）
-// iOS Safari では発火しないことがあるが、発火した場合の保険として有効
 window.addEventListener('pagehide', () => autoSave());
 window.addEventListener('beforeunload', () => autoSave());
 
@@ -1157,6 +1095,7 @@ function applyText(){
     tctx.clearRect(0,0,imgW,imgH);
     saveHistory();
     setMode('pen');
+    autoSave(); // 文字入力確定時に保存
 }
 
 function cancelText(){
