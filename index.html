@@ -867,13 +867,32 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /* ============================================================
-   【自動保存】2段階戦略
-   ・通常時（visibilitychange hidden）: IndexedDB に高画質で非同期保存
-   ・離脱直前（pagehide / beforeunload）: localStorage に同期保存（戻るボタン対策）
+   【自動保存】戦略
+   iOS Safari では pagehide/beforeunload が BFCache により発火しないため、
+   visibilitychange: hidden を唯一の保存トリガーとして使用する。
+
+   戻るボタン押下時も iOS Safari は hidden を発火させる（BFCache 移行前）ので
+   両方のケースをこのイベント1本で確実に捕捉できる。
+
+   保存先の使い分け：
+   ・IndexedDB（高画質PNG）: 非同期保存。ホームボタン・通常バックグラウンド
+   ・localStorage（JPEG圧縮）: 同期保存。IndexedDB 完了保証ができない高速離脱対策
+     → 両方同時に書き込み、起動時に新しい方をユーザーが選択
    ============================================================ */
 
-// --- 通常バックグラウンド退避（高画質・非同期） ---
-function asyncAutoSave() {
+function autoSave() {
+    // ── 同期保存（localStorage）: 必ず先に実行して離脱に備える ──
+    try {
+        const dataUrl = main.toDataURL('image/jpeg', 0.7);
+        localStorage.setItem('mrm_emergency_canvas', dataUrl);
+        const state = JSON.stringify({ textX, textY, scale, panX, panY, savedAt: Date.now() });
+        localStorage.setItem('mrm_emergency_state', state);
+        console.log('[AutoSave] localStorage 保存成功');
+    } catch (e) {
+        console.error('[AutoSave] localStorage 保存失敗 (容量超過の可能性):', e);
+    }
+
+    // ── 非同期保存（IndexedDB）: 高画質PNG。完了できれば上書き ──
     main.toBlob(blob => {
         if (!blob) return;
         setStorageData('canvas_backup_blob', blob).then(() => {
@@ -887,31 +906,18 @@ function asyncAutoSave() {
     }, 'image/png');
 }
 
-// --- 離脱直前バックアップ（同期・localStorage）---
-// toBlob は非同期なので、離脱直前は toDataURL で同期的に取得する
-// 画質は 0.7 に抑えてlocalStorage(5MB)の制限内に収める
-function syncEmergencySave() {
-    try {
-        const dataUrl = main.toDataURL('image/jpeg', 0.7);
-        localStorage.setItem('mrm_emergency_canvas', dataUrl);
-        const state = JSON.stringify({ textX, textY, scale, panX, panY, savedAt: Date.now() });
-        localStorage.setItem('mrm_emergency_state', state);
-        console.log('[AutoSave] localStorage 緊急保存成功');
-    } catch (e) {
-        console.error('[AutoSave] localStorage 緊急保存失敗 (容量超過の可能性):', e);
-    }
-}
-
-// ① ホームボタン・別アプリ切り替え → 非同期で高画質保存
+// visibilitychange: hidden を唯一のトリガーとする
+// （iOS Safari の戻るボタンも BFCache 移行前にこのイベントを発火する）
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-        asyncAutoSave();
+        autoSave();
     }
 });
 
-// ② 戻るボタン・タブ閉じ・ページ移動 → 同期で緊急保存
-window.addEventListener('pagehide', syncEmergencySave);
-window.addEventListener('beforeunload', syncEmergencySave);
+// pagehide / beforeunload は補助的に残す（Android Chrome・デスクトップ向け）
+// iOS Safari では発火しないことがあるが、発火した場合の保険として有効
+window.addEventListener('pagehide', () => autoSave());
+window.addEventListener('beforeunload', () => autoSave());
 
 function getPos(e){
     const rect = wrap.getBoundingClientRect();
